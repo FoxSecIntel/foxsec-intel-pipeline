@@ -59,7 +59,7 @@ Input (domain / IP / URL)
 ## Example Usage
 
 ```bash
-python main.py --domain example.com --output json
+python foxsec_scan.py --domain example.com --output json
 ```
 
 ## Example Output
