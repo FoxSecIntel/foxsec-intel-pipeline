@@ -33,6 +33,22 @@ TRUSTED_CLOUD_ASNS = {
     "AS8075",   # Microsoft
 }
 
+GEO_HIGH_RISK_COUNTRY_CODES = {"IR", "RU", "CN", "KP"}
+
+# Placeholder set. Keep this curated with threat intel inputs.
+BULLETPROOF_OR_ABUSE_TOLERANT_ASNS = {
+    "AS9009",
+    "AS20473",
+    "AS49505",
+}
+
+BULLETPROOF_PROVIDER_KEYWORDS = {
+    "bulletproof",
+    "ddos-guard",
+    "offshore",
+    "abuse",
+}
+
 BRAND_NAMES = [
     "paypal",
     "microsoft",
@@ -45,6 +61,8 @@ BRAND_NAMES = [
     "dropbox",
     "netflix",
 ]
+
+PHISHING_KEYWORDS = {"login", "secure", "verify", "account", "update", "billing", "support", "auth"}
 
 TRUSTED_DNS_PATTERNS = [
     "cloudflare.com",
@@ -225,14 +243,20 @@ def check_typosquat(domain: str, brands: list[str]) -> SignalResult:
             best_score = score
             best_brand = brand
 
-    detected = best_score > 0.85
+    contains_brand = any(brand in normalised_label for brand in brands)
+    detected = (best_score > 0.85) or contains_brand
     risk = 50 if detected else 0
+
+    keyword_hits = [k for k in PHISHING_KEYWORDS if k in domain.lower()]
+    if keyword_hits:
+        risk += min(20, len(keyword_hits) * 8)
 
     return SignalResult(
         {
             "typosquat_detected": detected,
             "matched_brand": best_brand if detected else None,
             "similarity_score": round(best_score, 4),
+            "phishing_keywords": sorted(keyword_hits),
             "risk_points": risk,
         },
         risk,
@@ -278,7 +302,7 @@ def check_email_security(domain: str) -> SignalResult:
     )
 
 
-def enrich_asn(ip: str) -> tuple[str | None, str | None]:
+def enrich_asn(ip: str) -> tuple[str | None, str | None, str | None]:
     req = Request(f"https://api.bgpview.io/ip/{ip}", headers={"User-Agent": "foxsec-intel-pipeline/0.2"})
     try:
         with urlopen(req, timeout=5) as response:
@@ -288,8 +312,9 @@ def enrich_asn(ip: str) -> tuple[str | None, str | None]:
             asn_obj = prefixes[0].get("asn") or {}
             asn_id = asn_obj.get("asn")
             provider = asn_obj.get("description")
+            country_code = asn_obj.get("country_code")
             if asn_id:
-                return f"AS{asn_id}", provider
+                return f"AS{asn_id}", provider, country_code
     except Exception:
         pass
 
@@ -302,11 +327,11 @@ def enrich_asn(ip: str) -> tuple[str | None, str | None]:
             if txt:
                 parts = [p.strip() for p in txt[0].split("|")]
                 if parts and parts[0].isdigit():
-                    return f"AS{parts[0]}", "Unknown"
+                    return f"AS{parts[0]}", "Unknown", None
     except Exception:
         pass
 
-    return None, None
+    return None, None, None
 
 
 def check_asn_reputation(domain: str) -> SignalResult:
@@ -315,14 +340,31 @@ def check_asn_reputation(domain: str) -> SignalResult:
 
     asn = None
     provider = None
+    country_code = None
     risk = 0
 
     if ip:
-        asn, provider = enrich_asn(ip)
+        asn, provider, country_code = enrich_asn(ip)
+
+    bulletproof_flag = False
+    if asn in BULLETPROOF_OR_ABUSE_TOLERANT_ASNS:
+        risk += 25
+        bulletproof_flag = True
+
+    provider_text = (provider or "").lower()
+    if any(k in provider_text for k in BULLETPROOF_PROVIDER_KEYWORDS):
+        risk += 25
+        bulletproof_flag = True
 
     if asn in HIGH_RISK_ASNS:
         risk += 20
-    elif asn in TRUSTED_CLOUD_ASNS:
+
+    country_risk_flag = False
+    if country_code and country_code.upper() in GEO_HIGH_RISK_COUNTRY_CODES:
+        risk += 20
+        country_risk_flag = True
+
+    if asn in TRUSTED_CLOUD_ASNS and not bulletproof_flag and not country_risk_flag:
         risk -= 10
 
     return SignalResult(
@@ -330,6 +372,9 @@ def check_asn_reputation(domain: str) -> SignalResult:
             "ip": ip,
             "asn": asn,
             "provider": provider,
+            "country_code": country_code,
+            "country_risk_flag": country_risk_flag,
+            "bulletproof_hosting_flag": bulletproof_flag,
             "risk_points": risk,
         },
         risk,
@@ -367,6 +412,26 @@ def check_dns_infrastructure(domain: str) -> SignalResult:
         },
         risk,
     )
+
+
+def calculate_signal_confidence(signals: dict[str, dict[str, Any]]) -> dict[str, int]:
+    confidence: dict[str, int] = {}
+
+    confidence["domain_age"] = 90 if signals.get("domain_age", {}).get("domain_age_days") is not None else 40
+    confidence["typosquat"] = 85
+
+    email = signals.get("email_security", {})
+    email_checks = int(email.get("spf_present") is not None) + int(email.get("dmarc_policy") != "missing")
+    confidence["email_security"] = 50 + (email_checks * 20)
+
+    asn = signals.get("asn_reputation", {})
+    asn_checks = int(asn.get("asn") is not None) + int(asn.get("country_code") is not None)
+    confidence["asn_reputation"] = 40 + (asn_checks * 25)
+
+    dns = signals.get("dns_quality", {})
+    confidence["dns_quality"] = 80 if dns.get("nameservers") else 45
+
+    return confidence
 
 
 def calculate_risk_score(signals: dict[str, dict[str, Any]]) -> tuple[int, str, dict[str, int]]:
@@ -423,10 +488,12 @@ def analyse_domain(domain: str) -> dict[str, Any]:
     }
 
     score, level, breakdown = calculate_risk_score(signals)
+    confidence = calculate_signal_confidence(signals)
 
     return {
         "domain": domain,
         "signals": signals,
+        "signal_confidence": confidence,
         "risk_breakdown": breakdown,
         "risk_score": score,
         "risk_level": level,
