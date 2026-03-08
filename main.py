@@ -147,6 +147,13 @@ def parse_whois_date(raw: str) -> datetime | None:
     return None
 
 
+def format_age(age_days: int) -> tuple[int, int, str]:
+    years = age_days // 365
+    days = age_days % 365
+    label = f"{years} years, {days} days"
+    return years, days, label
+
+
 def check_domain_age(domain: str) -> SignalResult:
     rc, out, err = run(["whois", domain], timeout=12)
     risk = 0
@@ -160,7 +167,19 @@ def check_domain_age(domain: str) -> SignalResult:
     if age_days is None:
         # Unknown domain age should be mildly suspicious but not catastrophic.
         risk += 10
-        return SignalResult({"domain_age_days": None, "risk_points": risk, "error": "whois_unavailable"}, risk)
+        return SignalResult(
+            {
+                "domain_age_days": None,
+                "domain_age_years": None,
+                "domain_age_remaining_days": None,
+                "domain_age_human": "unknown",
+                "risk_points": risk,
+                "error": "whois_unavailable",
+            },
+            risk,
+        )
+
+    years, rem_days, age_human = format_age(age_days)
 
     if age_days < 7:
         risk += 40
@@ -169,7 +188,16 @@ def check_domain_age(domain: str) -> SignalResult:
     elif age_days > 365:
         risk -= 20
 
-    return SignalResult({"domain_age_days": age_days, "risk_points": risk}, risk)
+    return SignalResult(
+        {
+            "domain_age_days": age_days,
+            "domain_age_years": years,
+            "domain_age_remaining_days": rem_days,
+            "domain_age_human": age_human,
+            "risk_points": risk,
+        },
+        risk,
+    )
 
 
 def normalise_for_typosquat(label: str) -> str:
@@ -341,10 +369,24 @@ def check_dns_infrastructure(domain: str) -> SignalResult:
     )
 
 
-def calculate_risk_score(signals: dict[str, dict[str, Any]]) -> tuple[int, str]:
-    total = 0
-    for signal_data in signals.values():
-        total += int(signal_data.get("risk_points", 0))
+def calculate_risk_score(signals: dict[str, dict[str, Any]]) -> tuple[int, str, dict[str, int]]:
+    # Keep each signal contribution in a sensible range.
+    # This avoids one noisy signal fully dominating the final score.
+    capped: dict[str, int] = {}
+    for name, signal_data in signals.items():
+        points = int(signal_data.get("risk_points", 0))
+        capped[name] = max(min(points, 50), -20)
+
+    total = sum(capped.values())
+
+    # Mild uncertainty uplift when critical data is missing.
+    uncertainty_penalty = 0
+    if signals.get("domain_age", {}).get("domain_age_days") is None:
+        uncertainty_penalty += 5
+    if signals.get("asn_reputation", {}).get("asn") is None:
+        uncertainty_penalty += 5
+
+    total += uncertainty_penalty
 
     # Keep score non-negative for easier reporting.
     total = max(total, 0)
@@ -356,7 +398,11 @@ def calculate_risk_score(signals: dict[str, dict[str, Any]]) -> tuple[int, str]:
     else:
         level = "LOW"
 
-    return total, level
+    breakdown = dict(capped)
+    if uncertainty_penalty:
+        breakdown["uncertainty"] = uncertainty_penalty
+
+    return total, level, breakdown
 
 
 def analyse_domain(domain: str) -> dict[str, Any]:
@@ -376,11 +422,12 @@ def analyse_domain(domain: str) -> dict[str, Any]:
         "dns_quality": dns_quality.payload,
     }
 
-    score, level = calculate_risk_score(signals)
+    score, level, breakdown = calculate_risk_score(signals)
 
     return {
         "domain": domain,
         "signals": signals,
+        "risk_breakdown": breakdown,
         "risk_score": score,
         "risk_level": level,
     }
