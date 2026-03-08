@@ -15,62 +15,55 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
 
-# Placeholder lists. Keep these curated over time.
-HIGH_RISK_ASNS = {
-    "AS9009",   # M247 (example placeholder)
-    "AS14061",  # DigitalOcean (example placeholder)
-    "AS16276",  # OVH (example placeholder)
+DEFAULT_RISK_PROFILE = {
+    "geo_high_risk_country_codes": ["IR", "RU", "CN", "KP"],
+    "high_risk_asns": ["AS9009", "AS14061", "AS16276"],
+    "trusted_cloud_asns": ["AS13335", "AS16509", "AS15169", "AS8075"],
+    "bulletproof_or_abuse_tolerant_asns": ["AS9009", "AS20473", "AS49505"],
+    "bulletproof_provider_keywords": ["bulletproof", "ddos-guard", "offshore", "abuse"],
+    "brand_names": [
+        "paypal",
+        "microsoft",
+        "amazon",
+        "google",
+        "apple",
+        "facebook",
+        "instagram",
+        "linkedin",
+        "dropbox",
+        "netflix",
+    ],
+    "phishing_keywords": ["login", "secure", "verify", "account", "update", "billing", "support", "auth"],
+    "trusted_dns_patterns": ["cloudflare.com", "awsdns", "googledomains.com", "google.com", "azure-dns"],
 }
 
-TRUSTED_CLOUD_ASNS = {
-    "AS13335",  # Cloudflare
-    "AS16509",  # Amazon
-    "AS15169",  # Google
-    "AS8075",   # Microsoft
-}
 
-GEO_HIGH_RISK_COUNTRY_CODES = {"IR", "RU", "CN", "KP"}
+def load_risk_profile(config_path: str | None = None) -> dict[str, Any]:
+    base = dict(DEFAULT_RISK_PROFILE)
 
-# Placeholder set. Keep this curated with threat intel inputs.
-BULLETPROOF_OR_ABUSE_TOLERANT_ASNS = {
-    "AS9009",
-    "AS20473",
-    "AS49505",
-}
+    if config_path:
+        candidate = Path(config_path)
+    else:
+        candidate = Path(__file__).resolve().parent / "config" / "risk_profiles.json"
 
-BULLETPROOF_PROVIDER_KEYWORDS = {
-    "bulletproof",
-    "ddos-guard",
-    "offshore",
-    "abuse",
-}
+    if not candidate.exists():
+        return base
 
-BRAND_NAMES = [
-    "paypal",
-    "microsoft",
-    "amazon",
-    "google",
-    "apple",
-    "facebook",
-    "instagram",
-    "linkedin",
-    "dropbox",
-    "netflix",
-]
+    try:
+        with candidate.open("r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        for key, value in loaded.items():
+            if key in base and isinstance(value, list):
+                base[key] = value
+    except Exception:
+        return base
 
-PHISHING_KEYWORDS = {"login", "secure", "verify", "account", "update", "billing", "support", "auth"}
-
-TRUSTED_DNS_PATTERNS = [
-    "cloudflare.com",
-    "awsdns",
-    "googledomains.com",
-    "google.com",
-    "azure-dns",
-]
+    return base
 
 
 @dataclass
@@ -230,7 +223,7 @@ def normalise_for_typosquat(label: str) -> str:
     )
 
 
-def check_typosquat(domain: str, brands: list[str]) -> SignalResult:
+def check_typosquat(domain: str, brands: list[str], phishing_keywords: set[str]) -> SignalResult:
     label = extract_sld_label(domain)
     normalised_label = normalise_for_typosquat(label)
 
@@ -247,7 +240,7 @@ def check_typosquat(domain: str, brands: list[str]) -> SignalResult:
     detected = (best_score > 0.85) or contains_brand
     risk = 50 if detected else 0
 
-    keyword_hits = [k for k in PHISHING_KEYWORDS if k in domain.lower()]
+    keyword_hits = [k for k in phishing_keywords if k in domain.lower()]
     if keyword_hits:
         risk += min(20, len(keyword_hits) * 8)
 
@@ -334,7 +327,14 @@ def enrich_asn(ip: str) -> tuple[str | None, str | None, str | None]:
     return None, None, None
 
 
-def check_asn_reputation(domain: str) -> SignalResult:
+def check_asn_reputation(
+    domain: str,
+    high_risk_asns: set[str],
+    trusted_cloud_asns: set[str],
+    geo_high_risk_country_codes: set[str],
+    bulletproof_or_abuse_tolerant_asns: set[str],
+    bulletproof_provider_keywords: set[str],
+) -> SignalResult:
     ips = resolve_ips(domain)
     ip = ips[0] if ips else None
 
@@ -347,24 +347,24 @@ def check_asn_reputation(domain: str) -> SignalResult:
         asn, provider, country_code = enrich_asn(ip)
 
     bulletproof_flag = False
-    if asn in BULLETPROOF_OR_ABUSE_TOLERANT_ASNS:
+    if asn in bulletproof_or_abuse_tolerant_asns:
         risk += 25
         bulletproof_flag = True
 
     provider_text = (provider or "").lower()
-    if any(k in provider_text for k in BULLETPROOF_PROVIDER_KEYWORDS):
+    if any(k in provider_text for k in bulletproof_provider_keywords):
         risk += 25
         bulletproof_flag = True
 
-    if asn in HIGH_RISK_ASNS:
+    if asn in high_risk_asns:
         risk += 20
 
     country_risk_flag = False
-    if country_code and country_code.upper() in GEO_HIGH_RISK_COUNTRY_CODES:
+    if country_code and country_code.upper() in geo_high_risk_country_codes:
         risk += 20
         country_risk_flag = True
 
-    if asn in TRUSTED_CLOUD_ASNS and not bulletproof_flag and not country_risk_flag:
+    if asn in trusted_cloud_asns and not bulletproof_flag and not country_risk_flag:
         risk -= 10
 
     return SignalResult(
@@ -381,19 +381,19 @@ def check_asn_reputation(domain: str) -> SignalResult:
     )
 
 
-def looks_trusted_ns(ns: str) -> bool:
+def looks_trusted_ns(ns: str, trusted_dns_patterns: list[str]) -> bool:
     lowered = ns.lower()
-    return any(pattern in lowered for pattern in TRUSTED_DNS_PATTERNS)
+    return any(pattern in lowered for pattern in trusted_dns_patterns)
 
 
-def check_dns_infrastructure(domain: str) -> SignalResult:
+def check_dns_infrastructure(domain: str, trusted_dns_patterns: list[str]) -> SignalResult:
     risk = 0
 
     mx = dig_short("MX", domain)
     mx_present = len(mx) > 0
 
     ns_records = [n.rstrip(".").lower() for n in dig_short("NS", domain)]
-    trusted_dns_provider = any(looks_trusted_ns(ns) for ns in ns_records)
+    trusted_dns_provider = any(looks_trusted_ns(ns, trusted_dns_patterns) for ns in ns_records)
 
     if not mx_present:
         risk += 10
@@ -470,14 +470,30 @@ def calculate_risk_score(signals: dict[str, dict[str, Any]]) -> tuple[int, str, 
     return total, level, breakdown
 
 
-def analyse_domain(domain: str) -> dict[str, Any]:
+def analyse_domain(domain: str, profile: dict[str, Any]) -> dict[str, Any]:
     domain = normalise_domain(domain)
 
+    brand_names = [str(x).lower() for x in profile.get("brand_names", [])]
+    phishing_keywords = {str(x).lower() for x in profile.get("phishing_keywords", [])}
+    high_risk_asns = {str(x).upper() for x in profile.get("high_risk_asns", [])}
+    trusted_cloud_asns = {str(x).upper() for x in profile.get("trusted_cloud_asns", [])}
+    geo_high_risk_country_codes = {str(x).upper() for x in profile.get("geo_high_risk_country_codes", [])}
+    bulletproof_or_abuse_tolerant_asns = {str(x).upper() for x in profile.get("bulletproof_or_abuse_tolerant_asns", [])}
+    bulletproof_provider_keywords = {str(x).lower() for x in profile.get("bulletproof_provider_keywords", [])}
+    trusted_dns_patterns = [str(x).lower() for x in profile.get("trusted_dns_patterns", [])]
+
     domain_age = check_domain_age(domain)
-    typosquat = check_typosquat(domain, BRAND_NAMES)
+    typosquat = check_typosquat(domain, brand_names, phishing_keywords)
     email_security = check_email_security(domain)
-    asn_reputation = check_asn_reputation(domain)
-    dns_quality = check_dns_infrastructure(domain)
+    asn_reputation = check_asn_reputation(
+        domain,
+        high_risk_asns,
+        trusted_cloud_asns,
+        geo_high_risk_country_codes,
+        bulletproof_or_abuse_tolerant_asns,
+        bulletproof_provider_keywords,
+    )
+    dns_quality = check_dns_infrastructure(domain, trusted_dns_patterns)
 
     signals = {
         "domain_age": domain_age.payload,
@@ -504,12 +520,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="foxsec-intel-pipeline domain risk scorer")
     parser.add_argument("--domain", required=True, help="Target domain")
     parser.add_argument("--output", choices=["json"], default="json", help="Output format")
+    parser.add_argument("--risk-config", default=None, help="Path to risk profile JSON file")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    result = analyse_domain(args.domain)
+    profile = load_risk_profile(args.risk_config)
+    result = analyse_domain(args.domain, profile)
     print(json.dumps(result, indent=2))
     return 0
 

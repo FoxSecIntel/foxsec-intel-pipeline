@@ -1,0 +1,21 @@
+{
+  "geo_high_risk_country_codes": ["IR", "RU", "CN", "KP"],
+  "high_risk_asns": ["AS9009", "AS14061", "AS16276"],
+  "trusted_cloud_asns": ["AS13335", "AS16509", "AS15169", "AS8075"],
+  "bulletproof_or_abuse_tolerant_asns": ["AS9009", "AS20473", "AS49505"],
+  "bulletproof_provider_keywords": ["bulletproof", "ddos-guard", "offshore", "abuse"],
+  "brand_names": [
+    "paypal",
+    "microsoft",
+    "amazon",
+    "google",
+    "apple",
+    "facebook",
+    "instagram",
+    "linkedin",
+    "dropbox",
+    "netflix"
+  ],
+  "phishing_keywords": ["login", "secure", "verify", "account", "update", "billing", "support", "auth"],
+  "trusted_dns_patterns": ["cloudflare.com", "awsdns", "googledomains.com", "google.com", "azure-dns"]
+}
