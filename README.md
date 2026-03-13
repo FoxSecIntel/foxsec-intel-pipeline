@@ -63,6 +63,21 @@ python foxsec_scan.py --domain example.com --output json
 python foxsec_scan.py --domain example.com --output json --risk-config config/risk_profiles.json
 ```
 
+## Optional shell alias
+
+Add this to your `~/.bash_profile`:
+
+```bash
+alias foxscan='python3 ~/r/repos/foxsec-intel-pipeline/foxsec_scan.py'
+```
+
+Then reload your shell and run:
+
+```bash
+source ~/.bash_profile
+foxscan --domain example.com --output json
+```
+
 ## Example Output
 
 ```json
