@@ -518,8 +518,8 @@ def analyse_domain(domain: str, profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def render_csv(result: dict[str, Any]) -> str:
-    row = {
+def result_to_row(result: dict[str, Any]) -> dict[str, Any]:
+    return {
         "domain": result.get("domain"),
         "risk_score": result.get("risk_score"),
         "risk_level": result.get("risk_level"),
@@ -532,91 +532,157 @@ def render_csv(result: dict[str, Any]) -> str:
         "typosquat_detected": result.get("signals", {}).get("typosquat", {}).get("typosquat_detected"),
     }
 
-    fieldnames = list(row.keys())
-    out = []
+
+def render_csv(results: list[dict[str, Any]]) -> str:
     from io import StringIO
 
+    rows = [result_to_row(r) for r in results]
+    if not rows:
+        return ""
+
+    fieldnames = list(rows[0].keys())
     buff = StringIO()
     writer = csv.DictWriter(buff, fieldnames=fieldnames)
     writer.writeheader()
-    writer.writerow(row)
+    writer.writerows(rows)
     return buff.getvalue().strip()
 
 
-def render_markdown(result: dict[str, Any]) -> str:
-    signals = result.get("signals", {})
-    email = signals.get("email_security", {})
-    asn = signals.get("asn_reputation", {})
-    dns = signals.get("dns_quality", {})
-    ty = signals.get("typosquat", {})
-    age = signals.get("domain_age", {})
+def render_markdown(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "# foxsec-intel-pipeline summary\n\nNo results."
 
-    lines = [
-        f"# foxsec-intel-pipeline summary: {result.get('domain')}",
-        "",
-        f"- Risk score: **{result.get('risk_score')}**",
-        f"- Risk level: **{result.get('risk_level')}**",
-        f"- Domain age: {age.get('domain_age_human', 'unknown')}",
-        f"- DMARC policy: {email.get('dmarc_policy')}",
-        f"- SPF present: {email.get('spf_present')}",
-        f"- ASN: {asn.get('asn')}",
-        f"- Provider: {asn.get('provider')}",
-        f"- Country: {asn.get('country_code')}",
-        f"- MX present: {dns.get('mx_present')}",
-        f"- Typosquat detected: {ty.get('typosquat_detected')}",
-    ]
+    if len(results) == 1:
+        result = results[0]
+        signals = result.get("signals", {})
+        email = signals.get("email_security", {})
+        asn = signals.get("asn_reputation", {})
+        dns = signals.get("dns_quality", {})
+        ty = signals.get("typosquat", {})
+        age = signals.get("domain_age", {})
 
-    keywords = ty.get("phishing_keywords") or []
-    if keywords:
-        lines.append(f"- Phishing keywords: {', '.join(keywords)}")
+        lines = [
+            f"# foxsec-intel-pipeline summary: {result.get('domain')}",
+            "",
+            f"- Risk score: **{result.get('risk_score')}**",
+            f"- Risk level: **{result.get('risk_level')}**",
+            f"- Domain age: {age.get('domain_age_human', 'unknown')}",
+            f"- DMARC policy: {email.get('dmarc_policy')}",
+            f"- SPF present: {email.get('spf_present')}",
+            f"- ASN: {asn.get('asn')}",
+            f"- Provider: {asn.get('provider')}",
+            f"- Country: {asn.get('country_code')}",
+            f"- MX present: {dns.get('mx_present')}",
+            f"- Typosquat detected: {ty.get('typosquat_detected')}",
+        ]
 
-    lines.append("")
-    lines.append("## Risk breakdown")
-    for k, v in (result.get("risk_breakdown") or {}).items():
-        lines.append(f"- {k}: {v}")
+        keywords = ty.get("phishing_keywords") or []
+        if keywords:
+            lines.append(f"- Phishing keywords: {', '.join(keywords)}")
 
+        lines.append("")
+        lines.append("## Risk breakdown")
+        for k, v in (result.get("risk_breakdown") or {}).items():
+            lines.append(f"- {k}: {v}")
+        return "\n".join(lines)
+
+    lines = ["# foxsec-intel-pipeline batch summary", "", "| Domain | Risk Score | Risk Level | DMARC | SPF | ASN |", "|---|---:|---|---|---|---|"]
+    for r in results:
+        row = result_to_row(r)
+        lines.append(
+            f"| {row['domain']} | {row['risk_score']} | {row['risk_level']} | {row['dmarc_policy']} | {row['spf_present']} | {row['asn'] or 'unknown'} |"
+        )
     return "\n".join(lines)
 
 
-def render_html(result: dict[str, Any]) -> str:
-    md = render_markdown(result)
-    rows = []
-    for line in md.splitlines():
-        if line.startswith("- "):
-            rows.append(f"<li>{html.escape(line[2:])}</li>")
+def render_html(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "<!doctype html><html><body><h1>No results</h1></body></html>"
+
+    rows_html = []
+    for r in results:
+        row = result_to_row(r)
+        rows_html.append(
+            "<tr>"
+            f"<td>{html.escape(str(row['domain']))}</td>"
+            f"<td>{html.escape(str(row['risk_score']))}</td>"
+            f"<td>{html.escape(str(row['risk_level']))}</td>"
+            f"<td>{html.escape(str(row['dmarc_policy']))}</td>"
+            f"<td>{html.escape(str(row['spf_present']))}</td>"
+            f"<td>{html.escape(str(row['asn'] or 'unknown'))}</td>"
+            "</tr>"
+        )
 
     return (
         "<!doctype html><html><head><meta charset='utf-8'><title>foxsec-intel-pipeline</title>"
-        "<style>body{font-family:Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 12px;}"
+        "<style>body{font-family:Arial,sans-serif;max-width:980px;margin:24px auto;padding:0 12px;}"
         "h1{font-size:22px} .card{border:1px solid #ddd;border-radius:8px;padding:16px}"
-        "li{margin:6px 0}</style></head><body>"
-        f"<h1>foxsec-intel-pipeline: {html.escape(str(result.get('domain')))}</h1>"
-        f"<div class='card'><ul>{''.join(rows)}</ul></div>"
-        "</body></html>"
+        "table{width:100%;border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left}"
+        "th{background:#f5f5f5}</style></head><body>"
+        f"<h1>foxsec-intel-pipeline batch report ({len(results)} domains)</h1>"
+        "<div class='card'><table><thead><tr><th>Domain</th><th>Risk Score</th><th>Risk Level</th><th>DMARC</th><th>SPF</th><th>ASN</th></tr></thead><tbody>"
+        f"{''.join(rows_html)}"
+        "</tbody></table></div></body></html>"
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="foxsec-intel-pipeline domain risk scorer")
-    parser.add_argument("--domain", required=True, help="Target domain")
+    parser.add_argument("--domain", required=False, help="Single target domain")
+    parser.add_argument("--input-file", required=False, help="Batch input file with one domain per line")
     parser.add_argument("--output", choices=["json", "csv", "markdown", "html"], default="json", help="Output format")
     parser.add_argument("--risk-config", default=None, help="Path to risk profile JSON file")
     return parser.parse_args()
 
 
+def load_domains_from_file(path: str) -> list[str]:
+    domains: list[str] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            item = line.strip()
+            if not item or item.startswith("#"):
+                continue
+            domains.append(item)
+    return domains
+
+
 def main() -> int:
     args = parse_args()
+    if not args.domain and not args.input_file:
+        print("Error: provide --domain or --input-file", file=sys.stderr)
+        return 2
+
     profile = load_risk_profile(args.risk_config)
-    result = analyse_domain(args.domain, profile)
+
+    targets: list[str] = []
+    if args.domain:
+        targets.append(args.domain)
+    if args.input_file:
+        targets.extend(load_domains_from_file(args.input_file))
+
+    # de-duplicate while preserving order
+    seen = set()
+    deduped = []
+    for t in targets:
+        n = normalise_domain(t)
+        if n in seen:
+            continue
+        seen.add(n)
+        deduped.append(n)
+
+    results = [analyse_domain(d, profile) for d in deduped]
 
     if args.output == "json":
-        print(json.dumps(result, indent=2))
+        if len(results) == 1 and args.domain and not args.input_file:
+            print(json.dumps(results[0], indent=2))
+        else:
+            print(json.dumps({"count": len(results), "results": results}, indent=2))
     elif args.output == "csv":
-        print(render_csv(result))
+        print(render_csv(results))
     elif args.output == "markdown":
-        print(render_markdown(result))
+        print(render_markdown(results))
     elif args.output == "html":
-        print(render_html(result))
+        print(render_html(results))
 
     return 0
 

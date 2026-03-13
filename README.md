@@ -64,6 +64,12 @@ python foxsec_scan.py --domain example.com --output csv
 python foxsec_scan.py --domain example.com --output markdown
 python foxsec_scan.py --domain example.com --output html > report.html
 python foxsec_scan.py --domain example.com --output json --risk-config config/risk_profiles.json
+
+# Batch mode: one domain per line
+python foxsec_scan.py --input-file domains.txt --output json
+python foxsec_scan.py --input-file domains.txt --output csv > batch.csv
+python foxsec_scan.py --input-file domains.txt --output markdown
+python foxsec_scan.py --input-file domains.txt --output html > batch-report.html
 ```
 
 ## Optional shell alias
@@ -79,6 +85,7 @@ Then reload your shell and run:
 ```bash
 source ~/.bash_profile
 foxscan --domain example.com --output json
+foxscan --input-file domains.txt --output markdown
 ```
 
 ## Example Output
