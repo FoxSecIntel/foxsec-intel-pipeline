@@ -60,6 +60,9 @@ Input (domain / IP / URL)
 
 ```bash
 python foxsec_scan.py --domain example.com --output json
+python foxsec_scan.py --domain example.com --output csv
+python foxsec_scan.py --domain example.com --output markdown
+python foxsec_scan.py --domain example.com --output html > report.html
 python foxsec_scan.py --domain example.com --output json --risk-config config/risk_profiles.json
 ```
 
