@@ -1,5 +1,9 @@
 # foxsec-intel-pipeline
 
+![CI](https://img.shields.io/github/actions/workflow/status/FoxSecIntel/foxsec-intel-pipeline/ci.yml?branch=main&label=CI)
+![License](https://img.shields.io/github/license/FoxSecIntel/foxsec-intel-pipeline)
+![Latest Release](https://img.shields.io/github/v/release/FoxSecIntel/foxsec-intel-pipeline)
+
 ## Overview
 
 `foxsec-intel-pipeline` is an analyst-first enrichment and scoring pipeline for security triage.
