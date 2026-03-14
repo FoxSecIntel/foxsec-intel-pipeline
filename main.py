@@ -595,31 +595,89 @@ def render_markdown(results: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def build_key_findings(result: dict[str, Any]) -> list[str]:
+    findings: list[str] = []
+    signals = result.get("signals", {})
+
+    email = signals.get("email_security", {})
+    if not email.get("spf_present"):
+        findings.append("No SPF record detected")
+    if email.get("dmarc_policy") in ("missing", "none"):
+        findings.append(f"DMARC policy is {email.get('dmarc_policy')}")
+
+    ty = signals.get("typosquat", {})
+    if ty.get("typosquat_detected"):
+        findings.append("Typosquat indicators detected")
+
+    asn = signals.get("asn_reputation", {})
+    if asn.get("country_risk_flag"):
+        findings.append("Hosted in high-risk country profile")
+    if asn.get("bulletproof_hosting_flag"):
+        findings.append("Potential bulletproof-hosting signal detected")
+
+    if not findings:
+        findings.append("No major risk indicators triggered")
+
+    return findings[:5]
+
+
 def render_html(results: list[dict[str, Any]]) -> str:
     if not results:
         return "<!doctype html><html><body><h1>No results</h1></body></html>"
 
     rows_html = []
+    panels_html = []
+
     for r in results:
         row = result_to_row(r)
+        level = str(row["risk_level"]).upper()
+        level_class = {"LOW": "level-low", "MEDIUM": "level-medium", "HIGH": "level-high"}.get(level, "")
+
         rows_html.append(
             "<tr>"
             f"<td>{html.escape(str(row['domain']))}</td>"
             f"<td>{html.escape(str(row['risk_score']))}</td>"
-            f"<td>{html.escape(str(row['risk_level']))}</td>"
+            f"<td><span class='pill {level_class}'>{html.escape(level)}</span></td>"
             f"<td>{html.escape(str(row['dmarc_policy']))}</td>"
             f"<td>{html.escape(str(row['spf_present']))}</td>"
             f"<td>{html.escape(str(row['asn'] or 'unknown'))}</td>"
             "</tr>"
         )
 
+        top_signals = sorted((r.get("risk_breakdown") or {}).items(), key=lambda x: x[1], reverse=True)[:3]
+        signal_lines = "".join(
+            f"<li>{html.escape(str(k))}: {html.escape(str(v))}</li>" for k, v in top_signals
+        ) or "<li>None</li>"
+
+        findings = build_key_findings(r)
+        findings_html = "".join(f"<li>{html.escape(item)}</li>" for item in findings)
+
+        panels_html.append(
+            "<div class='summary-card'>"
+            f"<h3>{html.escape(str(r.get('domain')))}</h3>"
+            f"<p>Risk Level: <span class='pill {level_class}'>{html.escape(level)}</span></p>"
+            f"<p>Risk Score: <strong>{html.escape(str(r.get('risk_score')))}</strong></p>"
+            "<p><strong>Top contributing signals</strong></p>"
+            f"<ul>{signal_lines}</ul>"
+            "<p><strong>Key findings</strong></p>"
+            f"<ul>{findings_html}</ul>"
+            "</div>"
+        )
+
     return (
         "<!doctype html><html><head><meta charset='utf-8'><title>foxsec-intel-pipeline</title>"
-        "<style>body{font-family:Arial,sans-serif;max-width:980px;margin:24px auto;padding:0 12px;}"
+        "<style>body{font-family:Arial,sans-serif;max-width:1080px;margin:24px auto;padding:0 12px;}"
         "h1{font-size:22px} .card{border:1px solid #ddd;border-radius:8px;padding:16px}"
+        ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:16px}"
+        ".summary-card{border:1px solid #ddd;border-radius:8px;padding:12px;background:#fafafa}"
+        ".pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}"
+        ".level-low{background:#e7f7ec;color:#1f7a3f}"
+        ".level-medium{background:#fff4e5;color:#a35a00}"
+        ".level-high{background:#ffe8e8;color:#a10000}"
         "table{width:100%;border-collapse:collapse} th,td{border:1px solid #ddd;padding:8px;text-align:left}"
-        "th{background:#f5f5f5}</style></head><body>"
+        "th{background:#f5f5f5} li{margin:4px 0}</style></head><body>"
         f"<h1>foxsec-intel-pipeline batch report ({len(results)} domains)</h1>"
+        f"<div class='summary-grid'>{''.join(panels_html)}</div>"
         "<div class='card'><table><thead><tr><th>Domain</th><th>Risk Score</th><th>Risk Level</th><th>DMARC</th><th>SPF</th><th>ASN</th></tr></thead><tbody>"
         f"{''.join(rows_html)}"
         "</tbody></table></div></body></html>"
