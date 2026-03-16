@@ -40,24 +40,22 @@ This project exists to standardise that first-pass enrichment and scoring into o
 
 ## Architecture
 
-```text
-Input (domain / IP / URL)
-
-        ↓
-
-   Collection Layer
-
-        ↓
-
-   Enrichment Layer
-
-        ↓
-
-  Analysis and Scoring
-
-        ↓
-
- JSON / HTML / Analyst Report
+```mermaid
+flowchart TD
+    A[Input artefact: domain or IP or URL] --> B[Collection layer]
+    B --> C[DNS resolution and TXT lookups]
+    C --> D[DMARC and SPF posture checks]
+    C --> E[MX and nameserver quality checks]
+    B --> F[ASN and provider enrichment]
+    F --> G[Country and hosting risk signals]
+    D --> H[Analysis and scoring engine]
+    E --> H
+    G --> H
+    H --> I[Risk breakdown and confidence]
+    I --> J[JSON output]
+    I --> K[CSV output]
+    I --> L[Markdown summary]
+    I --> M[HTML analyst report]
 ```
 
 ## Example Usage
