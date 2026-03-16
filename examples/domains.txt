@@ -1,0 +1,3 @@
+example.com
+cloudflare.com
+microsoft.com

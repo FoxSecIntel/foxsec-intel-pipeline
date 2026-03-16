@@ -116,6 +116,17 @@ foxscan --input-file domains.txt --output markdown
 - v0.6: Confidence scoring and evidence weighting
 - v0.7: Optional connectors for SIEM and SOAR
 
+## Examples and tests
+
+- Batch input examples: `examples/domains.txt`
+- Output generation examples: `examples/README.md`
+
+Run unit tests:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+```
+
 ## Related Tools
 
 - [BGP-Intel](https://github.com/FoxSecIntel/BGP-Intel): ASN and prefix exposure analysis
