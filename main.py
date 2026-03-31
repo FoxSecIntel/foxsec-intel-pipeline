@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+import sys
+if len(sys.argv) > 1 and sys.argv[1] in ("-a", "--author"):
+    print("Author: FoxSecIntel")
+    print("Repository: https://github.com/FoxSecIntel/foxsec-intel-pipeline
+    print("Tool: main.py")
+    raise SystemExit(0)
+
 """foxsec-intel-pipeline
 
 Domain enrichment and risk scoring for analyst triage.
